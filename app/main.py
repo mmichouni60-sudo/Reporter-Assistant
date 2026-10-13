@@ -47,3 +47,38 @@ def tables(x_api_key: str = Header(default="")):
             return [{"schema": r[0], "table": r[1]} for r in rows]
     except pyodbc.Error:
         raise HTTPException(503, "Database metadata unavailable")
+
+@app.get("/api/schema/columns")
+def columns(schema: str, table: str, x_api_key: str = Header(default="")):
+    authorize(x_api_key)
+    sql = """SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE
+             FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA=? AND TABLE_NAME=?
+             ORDER BY ORDINAL_POSITION"""
+    try:
+        with connect() as connection:
+            rows = connection.cursor().execute(sql, schema, table).fetchall()
+            return [{"name": r[0], "type": r[1], "nullable": r[2] == "YES"} for r in rows]
+    except pyodbc.Error:
+        raise HTTPException(503, "Database metadata unavailable")
+
+@app.get("/api/schema/relationships")
+def relationships(x_api_key: str = Header(default="")):
+    authorize(x_api_key)
+    sql = """SELECT fk.name, ps.name, pt.name, pc.name, rs.name, rt.name, rc.name
+             FROM sys.foreign_key_columns fkc
+             JOIN sys.foreign_keys fk ON fk.object_id=fkc.constraint_object_id
+             JOIN sys.tables pt ON pt.object_id=fkc.parent_object_id
+             JOIN sys.schemas ps ON ps.schema_id=pt.schema_id
+             JOIN sys.columns pc ON pc.object_id=pt.object_id AND pc.column_id=fkc.parent_column_id
+             JOIN sys.tables rt ON rt.object_id=fkc.referenced_object_id
+             JOIN sys.schemas rs ON rs.schema_id=rt.schema_id
+             JOIN sys.columns rc ON rc.object_id=rt.object_id AND rc.column_id=fkc.referenced_column_id"""
+    try:
+        with connect() as connection:
+            rows = connection.cursor().execute(sql).fetchall()
+            return [{"foreign_key": r[0],
+                     "from": {"schema": r[1], "table": r[2], "column": r[3]},
+                     "to": {"schema": r[4], "table": r[5], "column": r[6]}} for r in rows]
+    except pyodbc.Error:
+        raise HTTPException(503, "Database metadata unavailable")
