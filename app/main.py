@@ -3,6 +3,8 @@ import pyodbc
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Query
 from decimal import Decimal
+from pathlib import Path
+from fastapi.responses import FileResponse
 
 load_dotenv()
 app = FastAPI(title="Reporter Assistant", version="0.1.0")
@@ -119,3 +121,7 @@ def monthly_sales(year: int = Query(..., ge=1300, le=1600), x_api_key: str = Hea
             }
     except pyodbc.Error:
         raise HTTPException(503, "Sales report unavailable")
+
+@app.get("/dashboard", include_in_schema=False)
+def dashboard():
+    return FileResponse(Path(__file__).with_name("dashboard.html"), media_type="text/html")
