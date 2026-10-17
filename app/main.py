@@ -1,7 +1,8 @@
 import os
 import pyodbc
 from dotenv import load_dotenv
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Query
+from decimal import Decimal
 
 load_dotenv()
 app = FastAPI(title="Reporter Assistant", version="0.1.0")
@@ -14,7 +15,7 @@ def connect():
         "DRIVER={ODBC Driver 18 for SQL Server};"
         + "SERVER=" + values["DB_SERVER"] + ";DATABASE=" + values["DB_NAME"]
         + ";UID=" + values["DB_USER"] + ";PWD=" + values["DB_PASSWORD"]
-        + ";Encrypt=yes;TrustServerCertificate=no;ApplicationIntent=ReadOnly",
+        + ";Encrypt=yes;TrustServerCertificate=" + ("yes" if os.getenv("DB_TRUST_SERVER_CERTIFICATE", "no").lower() in ("yes", "true", "1") else "no") + ";ApplicationIntent=ReadOnly",
         timeout=5
     )
 
@@ -82,3 +83,39 @@ def relationships(x_api_key: str = Header(default="")):
                      "to": {"schema": r[4], "table": r[5], "column": r[6]}} for r in rows]
     except pyodbc.Error:
         raise HTTPException(503, "Database metadata unavailable")
+
+@app.get("/api/reports/sales/monthly")
+def monthly_sales(year: int = Query(..., ge=1300, le=1600), x_api_key: str = Header(default="")):
+    """Monthly confirmed sales in IRR, using the Persian calendar."""
+    authorize(x_api_key)
+    sql = """
+    SELECT d.jyear, d.jmonthN,
+           SUM(CASE WHEN f.Is_Return=0 THEN ISNULL(f.Net_Price,0) ELSE 0 END) AS Gross_Sales,
+           SUM(CASE WHEN f.Is_Return=1 THEN ISNULL(f.Net_Price,0) ELSE 0 END) AS Return_Amount,
+           SUM(CASE WHEN f.Is_Return=0 THEN ISNULL(f.Net_Price,0)
+                    WHEN f.Is_Return=1 THEN -ISNULL(f.Net_Price,0) ELSE 0 END) AS Net_Sales,
+           SUM(CASE WHEN f.Is_Return=0 THEN ISNULL(f.Invoice_QTY,0)
+                    WHEN f.Is_Return=1 THEN -ISNULL(f.Invoice_QTY,0) ELSE 0 END) AS Net_Qty
+    FROM sale.Fact_Invoice AS f
+    INNER JOIN sale.Dim_Date AS d ON f.Creation_Date_ID=d.MiladiDateKey
+    WHERE d.jyear=? AND f.Invoice_Status IN (2,11)
+    GROUP BY d.jyear,d.jmonthN
+    ORDER BY d.jyear,d.jmonthN
+    """
+    try:
+        with connect() as connection:
+            rows = connection.cursor().execute(sql, year).fetchall()
+            return {
+                "year": year,
+                "currency": "IRR",
+                "months": [
+                    {"year": int(r[0]), "month": int(r[1]),
+                     "gross_sales": str(r[2] or Decimal(0)),
+                     "return_amount": str(r[3] or Decimal(0)),
+                     "net_sales": str(r[4] or Decimal(0)),
+                     "net_qty": str(r[5] or Decimal(0))}
+                    for r in rows
+                ]
+            }
+    except pyodbc.Error:
+        raise HTTPException(503, "Sales report unavailable")
