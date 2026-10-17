@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="fa" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Reporter Assistant | فروش ماهانه</title>
+<style>
+:root{font-family:Tahoma,Arial,sans-serif;color:#172338;background:#f5f7fb}*{box-sizing:border-box}body{margin:0}.wrap{max-width:1160px;margin:36px auto;padding:0 20px}h1{font-size:26px;margin:0 0 8px}p{color:#667085}.panel,.metric{background:#fff;border:1px solid #e5e9f0;border-radius:14px;padding:20px}.filters{display:flex;gap:12px;flex-wrap:wrap;align-items:end;margin:24px 0}label{display:block;font-size:13px;margin-bottom:6px}input{font:inherit;padding:10px;border:1px solid #ccd5e2;border-radius:8px;max-width:260px}button{font:inherit;background:#155eef;color:#fff;border:0;border-radius:8px;padding:11px 22px;cursor:pointer}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.metric span{font-size:13px;color:#667085}.metric strong{display:block;font-size:21px;margin-top:10px;direction:ltr;text-align:right}.section{margin-top:20px}.bars{display:flex;align-items:end;gap:12px;height:290px;padding:20px 6px 0;overflow-x:auto}.barbox{flex:1;min-width:85px;text-align:center;font-size:12px}.bar{background:#3b82f6;border-radius:6px 6px 0 0;min-height:2px}.barbox span{display:block;margin-top:9px}table{border-collapse:collapse;width:100%;white-space:nowrap}th,td{padding:12px;text-align:right;border-bottom:1px solid #edf0f4}th{color:#667085;font-size:13px}td.num{direction:ltr;text-align:right;font-variant-numeric:tabular-nums}.scroll{overflow:auto}.error{color:#b42318}#message{min-height:20px}</style></head>
+<body><main class="wrap"><h1>گزارش فروش ماهانه</h1><p>مبالغ به ریال؛ فقط فاکتورهای تأییدشده و ثبت حسابداری، پس از کسر مرجوعی</p>
+<div class="panel filters"><div><label for="year">سال شمسی</label><input id="year" type="number" min="1300" max="1600" value="1405"></div><div><label for="key">کلید API</label><input id="key" type="password" autocomplete="off" placeholder="APP_API_KEY"></div><button id="load">دریافت گزارش</button></div>
+<div id="message" role="status"></div><div class="cards" id="cards"></div>
+<div class="panel section"><h2>روند فروش خالص (میلیارد ریال)</h2><div id="chart" class="bars"></div></div>
+<div class="panel section"><h2>جزئیات ماهانه</h2><div class="scroll"><table><thead><tr><th>ماه</th><th>فروش ناخالص (ریال)</th><th>مرجوعی (ریال)</th><th>فروش خالص (ریال)</th><th>تعداد خالص</th></tr></thead><tbody id="rows"></tbody></table></div></div>
+</main><script>
+const names=['فروردین','اردیبهشت','خرداد','تیر','مرداد','شهریور','مهر','آبان','آذر','دی','بهمن','اسفند'];
+const el=id=>document.getElementById(id);
+const nf=new Intl.NumberFormat('fa-IR',{maximumFractionDigits:2});
+function toNumber(x){return Number(x||0)}
+function format(x){return nf.format(toNumber(x))}
+function safe(t){return String(t).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+el('load').addEventListener('click',async()=>{
+ const year=Number(el('year').value),key=el('key').value;
+ if(!Number.isInteger(year)||year<1300||year>1600||!key){el('message').textContent='سال معتبر و کلید API را وارد کنید.';return}
+ el('message').textContent='در حال دریافت...';el('cards').replaceChildren();el('chart').replaceChildren();el('rows').replaceChildren();
+ try{
+ const response=await fetch('/api/reports/sales/monthly?year='+year,{headers:{'x-api-key':key},cache:'no-store'});
+ if(!response.ok)throw Error('خطای API: '+response.status);
+ const payload=await response.json(), data=payload.months||[];
+ if(!data.length){el('message').textContent='برای این سال داده‌ای پیدا نشد.';return}
+ const sum=k=>data.reduce((a,r)=>a+toNumber(r[k]),0);
+ const metrics=[['فروش ناخالص',sum('gross_sales')],['مرجوعی',sum('return_amount')],['فروش خالص',sum('net_sales')],['تعداد خالص',sum('net_qty')]];
+ metrics.forEach(([label,value],i)=>{const d=document.createElement('div');d.className='metric';d.innerHTML='<span>'+label+(i===3?'':' (ریال)')+'</span><strong>'+format(value)+'</strong>';el('cards').append(d)});
+ const max=Math.max(...data.map(r=>Math.max(0,toNumber(r.net_sales))),1);
+ data.forEach(r=>{
+ const name=names[Number(r.month)-1]||String(r.month),v=toNumber(r.net_sales);
+ const bar=document.createElement('div');bar.className='barbox';bar.innerHTML='<div>'+safe(format(v/1e9))+'</div><div class="bar" style="height:'+Math.max(2,Math.round(Math.max(0,v)/max*200))+'px"></div><span>'+safe(name)+'</span>';el('chart').append(bar);
+ const tr=document.createElement('tr');[name,format(r.gross_sales),format(r.return_amount),format(r.net_sales),format(r.net_qty)].forEach((v,i)=>{const td=document.createElement('td');td.textContent=v;if(i)td.className='num';tr.append(td)});el('rows').append(tr);
+ });
+ el('message').textContent='گزارش سال '+year+' دریافت شد.';
+ }catch(err){el('message').textContent=err.message;el('message').className='error'}
+});
+</script></body></html>
