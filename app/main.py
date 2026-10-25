@@ -2,6 +2,8 @@ import os
 import pyodbc
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Query
+from pydantic import BaseModel, Field
+from app.assistant_engine import ask as ask_ai
 from decimal import Decimal
 from pathlib import Path
 from fastapi.responses import FileResponse
@@ -125,3 +127,11 @@ def monthly_sales(year: int = Query(..., ge=1300, le=1600), x_api_key: str = Hea
 @app.get("/dashboard", include_in_schema=False)
 def dashboard():
     return FileResponse(Path(__file__).with_name("dashboard.html"), media_type="text/html")
+
+class AssistantQuestion(BaseModel):
+    question: str = Field(min_length=5, max_length=1000)
+
+@app.post("/api/assistant/ask")
+def assistant_ask(payload: AssistantQuestion, x_api_key: str = Header(default="")):
+    authorize(x_api_key)
+    return ask_ai(payload.question, connect)
