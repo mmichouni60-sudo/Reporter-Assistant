@@ -54,7 +54,8 @@ SCHEMA = {
 ALLOWED_FUNCTIONS = {"SUM", "COUNT", "AVG", "MIN", "MAX", "COALESCE", "ISNULL", "NULLIF", "ABS", "ROUND"}
 FORBIDDEN = (exp.Subquery, exp.Union, exp.Intersect, exp.Except, exp.CTE,
              exp.With, exp.Into, exp.Command, exp.Insert, exp.Update,
-             exp.Delete, exp.Create, exp.Drop, exp.Alter, exp.Star)
+             exp.Delete, exp.Create, exp.Drop, exp.Alter, exp.Star,
+             exp.Or, exp.Not, exp.Exists, exp.Window, exp.Lateral)
 
 
 def validate_sql(sql: str) -> str:
@@ -108,6 +109,12 @@ def validate_sql(sql: str) -> str:
                 valid_status = True
     if not valid_status:
         raise ValueError("Confirmed status filter is missing")
+    # Require an explicit bounded Persian year to prevent accidental full-history scans.
+    if not any(isinstance(e, exp.EQ) and (
+        (isinstance(e.left, exp.Column) and e.left.name.lower() == "jyear" and isinstance(e.right, exp.Literal)) or
+        (isinstance(e.right, exp.Column) and e.right.name.lower() == "jyear" and isinstance(e.left, exp.Literal))
+    ) for e in where.find_all(exp.EQ)):
+        raise ValueError("A specific Persian year filter is required")
     if len(tables) == 2:
         joins = list(tree.find_all(exp.Join))
         if not joins or not any(
