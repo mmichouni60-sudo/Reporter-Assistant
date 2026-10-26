@@ -22,7 +22,8 @@ ALLOWED = {
     "dim_date": {
         "full": "sale.Dim_Date",
         "columns": {"MiladiDateKey", "jyear", "jmonthN"}
-    }
+    },
+    "dim_product": {"full": "sale.Dim_Product", "columns": {"Product_ID_BK", "Product_Name", "Product_Code", "Hierarch1", "Brand_Name", "Group_Name", "Category_Name", "Product_Unit"}}
 }
 PROMPT = """You translate colloquial Persian questions into Microsoft SQL Server SELECT queries.
 Return a JSON object with keys sql, title, chart, clarification.
@@ -31,7 +32,11 @@ If the user requests fields outside the available schema, return empty sql and e
 Use only these tables and columns:
 sale.Fact_Invoice f: Invoice_ID, Invoice_Item_ID, Product_ID, Invoice_QTY, Net_Price, Is_Return, Invoice_Status, Creation_Date_ID
 sale.Dim_Date d: MiladiDateKey, jyear, jmonthN
+sale.Dim_Product p: Product_ID_BK, Product_Name, Product_Code, Hierarch1, Brand_Name, Group_Name, Category_Name, Product_Unit
 JOIN f.Creation_Date_ID = d.MiladiDateKey.
+For product reports JOIN f.Product_ID = p.Product_ID_BK (unique); never join to p.Product_ID.
+Never filter p.Is_Active_SCD: all values are NULL.
+For product groups use p.Hierarch1. d.jyear is NVARCHAR, use quoted year literals.
 Business rules: confirmed invoices f.Invoice_Status IN (2,11).
 Gross sales = SUM(CASE WHEN Is_Return=0 THEN Net_Price ELSE 0 END).
 Returns = SUM(CASE WHEN Is_Return=1 THEN Net_Price ELSE 0 END).
@@ -79,13 +84,13 @@ def validate_sql(sql: str) -> str:
         if isinstance(node, exp.Anonymous) and node.name.upper() not in ALLOWED_FUNCTIONS:
             raise ValueError("SQL function not permitted")
     tables = list(tree.find_all(exp.Table))
-    if not tables or len(tables) > 2:
+    if not tables or len(tables) > 3:
         raise ValueError("Unsupported table selection")
     aliases = {}
     for t in tables:
         schema = (t.db or "").lower()
         name = t.name.lower()
-        if (schema, name) not in {("sale", "fact_invoice"), ("sale", "dim_date")}:
+        if (schema, name) not in {("sale", "fact_invoice"), ("sale", "dim_date"), ("sale", "dim_product")}:
             raise ValueError("Table is not in the allowlist")
         key = t.alias_or_name.lower()
         if key in aliases:
@@ -121,15 +126,27 @@ def validate_sql(sql: str) -> str:
         (isinstance(e.right, exp.Column) and e.right.name.lower() == "jyear" and isinstance(e.left, exp.Literal))
     ) for e in where.find_all(exp.EQ)):
         raise ValueError("A specific Persian year filter is required")
-    if len(tables) == 2:
-        joins = list(tree.find_all(exp.Join))
-        if not joins or not any(
-            isinstance(e, exp.EQ)
-            and {getattr(e.left, "name", "").lower(), getattr(e.right, "name", "").lower()}
-            == {"creation_date_id", "miladidatekey"}
-            for j in joins for e in j.find_all(exp.EQ)
-        ):
-            raise ValueError("Approved date join is required")
+    # Validate every dimension join against approved key pairs.
+    alias_to_table = {t.alias_or_name.lower(): t.name.lower() for t in tables}
+    joined_names = set(alias_to_table.values())
+    expected = []
+    if "dim_date" in joined_names:
+        expected.append({("fact_invoice", "creation_date_id"), ("dim_date", "miladidatekey")})
+    if "dim_product" in joined_names:
+        expected.append({("fact_invoice", "product_id"), ("dim_product", "product_id_bk")})
+    actual = []
+    for join in tree.find_all(exp.Join):
+        on = join.args.get("on")
+        if on is None:
+            continue
+        for eq in on.find_all(exp.EQ):
+            if isinstance(eq.left, exp.Column) and isinstance(eq.right, exp.Column):
+                actual.append({
+                    (alias_to_table.get(eq.left.table.lower()), eq.left.name.lower()),
+                    (alias_to_table.get(eq.right.table.lower()), eq.right.name.lower())
+                })
+    if any(pair not in actual for pair in expected):
+        raise ValueError("Approved dimension join is required")
     # Restrict output size even if the model omits TOP.
     tree.set("limit", exp.Limit(expression=exp.Literal.number(200)))
     return tree.sql(dialect="tsql")
