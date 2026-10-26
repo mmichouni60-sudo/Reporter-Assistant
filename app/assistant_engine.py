@@ -34,7 +34,7 @@ Gross sales = SUM(CASE WHEN Is_Return=0 THEN Net_Price ELSE 0 END).
 Returns = SUM(CASE WHEN Is_Return=1 THEN Net_Price ELSE 0 END).
 Net sales = gross minus returns. Net quantity likewise using Invoice_QTY.
 Net_Price currency IRR. Dates jyear/jmonthN are Persian calendar.
-Always use qualified column references. Never use SELECT *.
+Always use qualified column references. Never use SELECT *.\nDo not wrap SQL in Markdown fences and do not append a semicolon.
 Never use any other tables, dynamic SQL, CTE, subqueries, or UNION.
 Always constrain the Persian year when the question supplies it.
 Return a short SQL query with TOP (100) for non-aggregated row listings.
@@ -59,6 +59,9 @@ FORBIDDEN = (exp.Subquery, exp.Union, exp.Intersect, exp.Except, exp.CTE,
 
 
 def validate_sql(sql: str) -> str:
+    sql = sql.strip()
+    if sql.endswith(";"):
+        sql = sql[:-1].rstrip()
     if not sql or len(sql) > 7000 or ";" in sql or "--" in sql or "/*" in sql:
         raise ValueError("SQL syntax not permitted")
     try:
