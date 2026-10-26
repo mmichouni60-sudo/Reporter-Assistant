@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 from app.assistant_engine import ask as ask_ai
+from app.schema_catalog import discover as discover_schema
 from decimal import Decimal
 from pathlib import Path
 from fastapi.responses import FileResponse
@@ -135,3 +136,10 @@ class AssistantQuestion(BaseModel):
 def assistant_ask(payload: AssistantQuestion, x_api_key: str = Header(default="")):
     authorize(x_api_key)
     return ask_ai(payload.question, connect)
+
+@app.get("/api/schema/catalog")
+def schema_catalog(schema: str | None = Query(default=None, min_length=1, max_length=128),
+                   x_api_key: str = Header(default="")):
+    """Read-only table/column/FK discovery; no business rows."""
+    authorize(x_api_key)
+    return discover_schema(connect, schema)
