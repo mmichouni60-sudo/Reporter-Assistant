@@ -159,8 +159,8 @@ def ask(question: str, connection_factory):
         return {"status": "rejected", "message": str(exc), "sql": None}
     try:
         with connection_factory() as connection:
+            connection.timeout = 15
             cursor = connection.cursor()
-            cursor.timeout = 15
             cursor.execute("SET LOCK_TIMEOUT 5000")
             cursor.execute(sql)
             columns = [x[0] for x in cursor.description]
