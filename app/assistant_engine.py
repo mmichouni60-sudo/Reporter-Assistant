@@ -5,10 +5,13 @@ No database rows or connection credentials are sent to the model.
 """
 import json
 import os
+import logging
 from decimal import Decimal
 from fastapi import HTTPException
 from openai import OpenAI
 from sqlglot import parse_one, exp
+
+logger = logging.getLogger('uvicorn.error')
 
 ALLOWED = {
     "fact_invoice": {
@@ -166,7 +169,8 @@ def ask(question: str, connection_factory):
                 for row in cursor.fetchmany(201)
             ]
     except Exception as exc:
-        raise HTTPException(503, "Report execution failed") from exc
+        logger.error("Report execution failed: error_type=%s, sqlstate=%s, message=%s", type(exc).__name__, exc.args[0] if getattr(exc, "args", None) else "unknown", str(exc)[:700])
+        raise HTTPException(503, "Report execution failed; check server logs") from exc
     return {"status": "ok", "title": plan["title"], "chart": plan["chart"],
             "currency": "IRR", "columns": columns, "rows": rows[:200],
             "row_count": min(len(rows), 200), "truncated": len(rows) > 200,
