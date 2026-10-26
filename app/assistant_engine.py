@@ -42,7 +42,7 @@ Gross sales = SUM(CASE WHEN Is_Return=0 THEN Net_Price ELSE 0 END).
 Returns = SUM(CASE WHEN Is_Return=1 THEN Net_Price ELSE 0 END).
 Net sales = gross minus returns. Net quantity likewise using Invoice_QTY.
 Net_Price currency IRR. Dates jyear/jmonthN are Persian calendar.
-Always use qualified column references. Never use SELECT *.\nDo not wrap SQL in Markdown fences and do not append a semicolon.
+Always use qualified source columns. SELECT aliases may be used unqualified only in ORDER BY. Never use SELECT *.\nDo not wrap SQL in Markdown fences and do not append a semicolon.
 Never use any other tables, dynamic SQL, CTE, subqueries, or UNION.
 Always constrain the Persian year when the question supplies it.
 Return a short SQL query with TOP (100) for non-aggregated row listings.
@@ -96,12 +96,24 @@ def validate_sql(sql: str) -> str:
         if key in aliases:
             raise ValueError("Duplicate alias")
         aliases[key] = ALLOWED[name]["columns"]
+    # SQL Server permits SELECT output aliases only in top-level ORDER BY.
+    select_aliases = {
+        expression.alias.lower()
+        for expression in tree.expressions
+        if isinstance(expression, exp.Alias) and expression.alias
+    }
+    order = tree.args.get("order")
     for col in tree.find_all(exp.Column):
         qualifier = col.table.lower()
-        if not qualifier or qualifier not in aliases:
+        if not qualifier:
+            if (order is not None and col.name.lower() in select_aliases
+                    and any(col is descendant for ordered in order.expressions
+                            for descendant in ordered.walk())):
+                continue
             raise ValueError("Columns must use known table aliases")
-        if col.name.lower() not in {c.lower() for c in aliases[qualifier]}:
-            # output aliases in ORDER BY are allowed when unqualified, but require explicit expressions for MVP
+        if qualifier not in aliases:
+            raise ValueError("Columns must use known table aliases")
+        if col.name.lower() not in {name.lower() for name in aliases[qualifier]}:
             raise ValueError("Unknown column")
     # Require the mandatory invoice status filter, verified structurally.
     invoice_aliases = [a for a, cols in aliases.items() if "Invoice_Status" in cols]
