@@ -23,7 +23,7 @@ ALLOWED = {
         "full": "sale.Dim_Date",
         "columns": {"MiladiDateKey", "jyear", "jmonthN"}
     },
-    "dim_product": {"full": "sale.Dim_Product", "columns": {"Product_ID_BK", "Product_Name", "Product_Code", "Hierarch1", "Brand_Name", "Group_Name", "Category_Name", "Product_Unit"}}
+    "dim_product": {"full": "sale.Dim_Product", "columns": {"Product_ID_BK", "Product_ID", "Company_ID", "Product_Name", "Product_Code", "Hierarch1", "Brand_Name", "Group_Name", "Category_Name", "Product_Unit"}}
 }
 PROMPT = """You translate colloquial Persian questions into Microsoft SQL Server SELECT queries.
 Return a JSON object with keys sql, title, chart, clarification.
@@ -32,11 +32,11 @@ If the user requests fields outside the available schema, return empty sql and e
 Use only these tables and columns:
 sale.Fact_Invoice f: Invoice_ID, Invoice_Item_ID, Product_ID, Invoice_QTY, Net_Price, Is_Return, Invoice_Status, Creation_Date_ID
 sale.Dim_Date d: MiladiDateKey, jyear, jmonthN
-sale.Dim_Product p: Product_ID_BK, Product_Name, Product_Code, Hierarch1, Brand_Name, Group_Name, Category_Name, Product_Unit
+sale.Dim_Product p: Product_ID_BK, Product_ID, Company_ID, Product_Name, Product_Code, Hierarch1, Brand_Name, Group_Name, Category_Name, Product_Unit
 JOIN f.Creation_Date_ID = d.MiladiDateKey.
 For product reports JOIN f.Product_ID = p.Product_ID_BK (unique); never join to p.Product_ID.
 Never filter p.Is_Active_SCD: all values are NULL.
-For product groups use p.Hierarch1. d.jyear is NVARCHAR, use quoted year literals.
+For product groups use p.Hierarch1. For top-selling PRODUCTS (not product groups or product units), GROUP BY p.Company_ID, p.Product_ID, p.Product_Code, p.Product_Name; never GROUP BY p.Hierarch1 or p.Product_ID_BK for this report. If group display is requested for top-selling products, use MAX(p.Hierarch1) as display only; it is not a grouping key and may be ambiguous when inconsistent. Order by the net sales aggregate descending. d.jyear is NVARCHAR, use quoted year literals.
 Business rules: confirmed invoices f.Invoice_Status IN (2,11).
 Gross sales = SUM(CASE WHEN Is_Return=0 THEN Net_Price ELSE 0 END).
 Returns = SUM(CASE WHEN Is_Return=1 THEN Net_Price ELSE 0 END).
