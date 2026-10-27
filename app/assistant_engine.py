@@ -102,13 +102,11 @@ def validate_sql(sql: str) -> str:
         for expression in tree.expressions
         if isinstance(expression, exp.Alias) and expression.alias
     }
-    order = tree.args.get("order")
     for col in tree.find_all(exp.Column):
         qualifier = col.table.lower()
         if not qualifier:
-            if (order is not None and col.name.lower() in select_aliases
-                    and any(col is descendant for ordered in order.expressions
-                            for descendant in ordered.walk())):
+            # ORDER BY may reference a SELECT alias; other unqualified columns are forbidden.
+            if col.name.lower() in select_aliases and col.find_ancestor(exp.Order) is not None:
                 continue
             raise ValueError("Columns must use known table aliases")
         if qualifier not in aliases:
