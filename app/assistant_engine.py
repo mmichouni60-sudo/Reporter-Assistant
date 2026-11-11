@@ -6,6 +6,7 @@ No database rows or connection credentials are sent to the model.
 import json
 import os
 import logging
+import re
 from decimal import Decimal
 from fastapi import HTTPException
 from openai import OpenAI
@@ -45,7 +46,7 @@ Net_Price currency IRR. Dates jyear/jmonthN are Persian calendar.
 Always use qualified source columns. SELECT aliases may be used unqualified only in ORDER BY. Never use SELECT *.\nDo not wrap SQL in Markdown fences and do not append a semicolon.
 Never use any other tables, dynamic SQL, CTE, subqueries, or UNION.
 Always constrain the Persian year when the question supplies it.
-Return a short SQL query with TOP (100) for non-aggregated row listings.
+For explicit top N rankings return exactly N rows; otherwise use TOP (100) for non-aggregated row listings.
 Do not assume unsupported business definitions or unknown product names.
 """
 SCHEMA = {
@@ -66,7 +67,16 @@ FORBIDDEN = (exp.Subquery, exp.Union, exp.Intersect, exp.Except, exp.CTE,
              exp.Or, exp.Not, exp.Exists, exp.Window, exp.Lateral)
 
 
-def validate_sql(sql: str) -> str:
+def requested_top_n(question: str):
+    """Extract an explicit top-N count, ignoring four-digit years."""
+    q = question.translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789"))
+    if not re.search(r"(?:برتر|پرفروش|بیشترین|کمترین|top\\b)", q, re.IGNORECASE):
+        return None
+    nums = re.findall(r"(?<![\\d/])\\d{1,3}(?![\\d/])", q)
+    return int(nums[0]) if len(nums) == 1 and 1 <= int(nums[0]) <= 200 else None
+
+
+def validate_sql(sql: str, top_n=None) -> str:
     sql = sql.strip()
     if sql.endswith(";"):
         sql = sql[:-1].rstrip()
@@ -158,7 +168,9 @@ def validate_sql(sql: str) -> str:
     if any(pair not in actual for pair in expected):
         raise ValueError("Approved dimension join is required")
     # Restrict output size even if the model omits TOP.
-    tree.set("limit", exp.Limit(expression=exp.Literal.number(200)))
+    if top_n is not None and not (1 <= top_n <= 200):
+        raise ValueError("Invalid TOP limit")
+    tree.set("limit", exp.Limit(expression=exp.Literal.number(top_n or 200)))
     return tree.sql(dialect="tsql")
 
 
@@ -181,9 +193,10 @@ def ask(question: str, connection_factory):
     if not plan.get("sql"):
         return {"status": "needs_clarification", "message": plan.get("clarification") or "اطلاعات کافی نیست"}
     try:
-        sql = validate_sql(plan["sql"])
+        sql = validate_sql(plan["sql"], top_n=requested_top_n(question))
     except ValueError as exc:
         return {"status": "rejected", "message": str(exc), "sql": None}
+    output_limit = requested_top_n(question) or 200
     try:
         with connection_factory() as connection:
             connection.timeout = 15
@@ -193,12 +206,12 @@ def ask(question: str, connection_factory):
             columns = [x[0] for x in cursor.description]
             rows = [
                 {k: str(v) if isinstance(v, Decimal) else v for k, v in zip(columns, row)}
-                for row in cursor.fetchmany(201)
+                for row in cursor.fetchmany(output_limit + 1)
             ]
     except Exception as exc:
         logger.error("Report execution failed: error_type=%s, sqlstate=%s, message=%s", type(exc).__name__, exc.args[0] if getattr(exc, "args", None) else "unknown", str(exc)[:700])
         raise HTTPException(503, "Report execution failed; check server logs") from exc
     return {"status": "ok", "title": plan["title"], "chart": plan["chart"],
-            "currency": "IRR", "columns": columns, "rows": rows[:200],
-            "row_count": min(len(rows), 200), "truncated": len(rows) > 200,
+            "currency": "IRR", "columns": columns, "rows": rows[:output_limit],
+            "row_count": min(len(rows), output_limit), "truncated": len(rows) > output_limit,
             "sql": sql}
