@@ -41,7 +41,7 @@ For product groups use p.Hierarch1. For top-selling PRODUCTS (not product groups
 Business rules: confirmed invoices f.Invoice_Status IN (2,11).
 Gross sales = SUM(CASE WHEN Is_Return=0 THEN Net_Price ELSE 0 END).
 Returns = SUM(CASE WHEN Is_Return=1 THEN Net_Price ELSE 0 END).
-Net sales = gross minus returns. Net quantity likewise using Invoice_QTY.
+Net sales = gross minus returns. Net quantity likewise using Invoice_QTY ONLY when grouped by p.Product_Unit; never sum Invoice_QTY across mixed product units. For commercial-product top rankings based on amount, omit Net_QTY unless the user explicitly asks for quantities, in which case ask for unit-specific breakdown.
 Net_Price currency IRR. Dates jyear/jmonthN are Persian calendar.
 Always use qualified source columns. SELECT aliases may be used unqualified only in ORDER BY. Never use SELECT *.\nDo not wrap SQL in Markdown fences and do not append a semicolon.
 Never use any other tables, dynamic SQL, CTE, subqueries, or UNION.
@@ -167,6 +167,26 @@ def validate_sql(sql: str, top_n=None) -> str:
                 })
     if any(pair not in actual for pair in expected):
         raise ValueError("Approved dimension join is required")
+    # Mixed product units must not be silently combined in quantity aggregates.
+    product_aliases = [a for a, name in alias_to_table.items() if name == "dim_product"]
+    if product_aliases and tree.args.get("group") is not None:
+        group_cols = {
+            (col.table.lower(), col.name.lower())
+            for col in tree.args["group"].find_all(exp.Column)
+        }
+        unit_grouped = any((alias, "product_unit") in group_cols for alias in product_aliases)
+        quantity_summed = any(
+            isinstance(fn, exp.Sum)
+            and any(
+                isinstance(col, exp.Column)
+                and col.name.lower() == "invoice_qty"
+                and alias_to_table.get(col.table.lower()) == "fact_invoice"
+                for col in fn.find_all(exp.Column)
+            )
+            for fn in tree.find_all(exp.Sum)
+        )
+        if quantity_summed and not unit_grouped:
+            raise ValueError("Quantity aggregation requires GROUP BY p.Product_Unit to avoid mixing units")
     # Restrict output size even if the model omits TOP.
     if top_n is not None and not (1 <= top_n <= 200):
         raise ValueError("Invalid TOP limit")
