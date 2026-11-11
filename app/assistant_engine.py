@@ -194,6 +194,45 @@ def validate_sql(sql: str, top_n=None) -> str:
     return tree.sql(dialect="tsql")
 
 
+def validate_or_repair_sql(plan, question, client):
+    """Validate first; allow exactly one model repair, then validate again."""
+    limit = requested_top_n(question)
+    try:
+        return validate_sql(plan["sql"], top_n=limit), False
+    except ValueError as initial_error:
+        logger.warning("Generated SQL rejected: %s; attempting one repair", str(initial_error))
+        try:
+            response = client.responses.create(
+                model=os.getenv("OPENAI_MODEL", "gpt-5-mini"),
+                instructions=(
+                    PROMPT
+                    + "\nRepair the rejected SQL using the validation error. "
+                    + "Preserve the user's original intent and do not weaken any safety rules. "
+                    + "If valid SQL cannot represent the request, return an empty sql "
+                    + "and explain the limitation in clarification."
+                ),
+                input=json.dumps({
+                    "question": question,
+                    "rejected_sql": plan["sql"],
+                    "validation_error": str(initial_error),
+                }, ensure_ascii=False),
+                text={"format": {"type": "json_schema", "name": "sql_plan",
+                                 "schema": SCHEMA, "strict": True}},
+                store=False,
+            )
+            repaired = json.loads(response.output_text)
+        except Exception as exc:
+            logger.warning("SQL repair planning failed: %s", type(exc).__name__)
+            return None, False
+        if not repaired.get("sql"):
+            return None, False
+        try:
+            return validate_sql(repaired["sql"], top_n=limit), True
+        except ValueError as exc:
+            logger.warning("Repaired SQL rejected: %s", str(exc))
+            return None, False
+
+
 def ask(question: str, connection_factory):
     if not os.getenv("OPENAI_API_KEY"):
         raise HTTPException(503, "OPENAI_API_KEY is not configured")
@@ -212,10 +251,9 @@ def ask(question: str, connection_factory):
         raise HTTPException(502, "AI planning failed") from exc
     if not plan.get("sql"):
         return {"status": "needs_clarification", "message": plan.get("clarification") or "اطلاعات کافی نیست"}
-    try:
-        sql = validate_sql(plan["sql"], top_n=requested_top_n(question))
-    except ValueError as exc:
-        return {"status": "rejected", "message": str(exc), "sql": None}
+    sql, repaired = validate_or_repair_sql(plan, question, client)
+    if sql is None:
+        return {"status": "rejected", "message": "SQL validation failed after one repair attempt", "sql": None}
     output_limit = requested_top_n(question) or 200
     try:
         with connection_factory() as connection:
@@ -234,4 +272,4 @@ def ask(question: str, connection_factory):
     return {"status": "ok", "title": plan["title"], "chart": plan["chart"],
             "currency": "IRR", "columns": columns, "rows": rows[:output_limit],
             "row_count": min(len(rows), output_limit), "truncated": len(rows) > output_limit,
-            "sql": sql}
+            "sql": sql, "sql_repaired": repaired}
