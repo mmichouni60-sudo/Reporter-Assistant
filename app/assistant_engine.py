@@ -70,9 +70,9 @@ FORBIDDEN = (exp.Subquery, exp.Union, exp.Intersect, exp.Except, exp.CTE,
 def requested_top_n(question: str):
     """Extract an explicit top-N count, ignoring four-digit years."""
     q = question.translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789"))
-    if not re.search(r"(?:برتر|پرفروش|بیشترین|کمترین|top\\b)", q, re.IGNORECASE):
+    if not re.search(r"(?:برتر|پرفروش|بیشترین|کمترین|top\b)", q, re.IGNORECASE):
         return None
-    nums = re.findall(r"(?<![\\d/])\\d{1,3}(?![\\d/])", q)
+    nums = re.findall(r"(?<![\d/])\d{1,3}(?![\d/])", q)
     return int(nums[0]) if len(nums) == 1 and 1 <= int(nums[0]) <= 200 else None
 
 
