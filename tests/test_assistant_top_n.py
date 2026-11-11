@@ -32,6 +32,25 @@ class TopNTests(unittest.TestCase):
         result = validate_sql(SQL)
         self.assertIn("TOP 200", result.upper().replace("(", "").replace(")", ""))
 
+    def test_mixed_unit_quantity_rejected(self):
+        sql = SQL.replace(
+            " AS Net_Sales ",
+            " AS Net_Sales, SUM(f.Invoice_QTY) AS Net_QTY "
+        )
+        with self.assertRaisesRegex(ValueError, "Product_Unit"):
+            validate_sql(sql, top_n=10)
+
+    def test_unit_grouped_quantity_allowed(self):
+        sql = SQL.replace(
+            " AS Net_Sales ",
+            " AS Net_Sales, SUM(f.Invoice_QTY) AS Net_QTY "
+        ).replace(
+            "p.Product_Name ORDER BY",
+            "p.Product_Name, p.Product_Unit ORDER BY"
+        )
+        result = validate_sql(sql, top_n=10)
+        self.assertIn("Product_Unit", result)
+
     def test_invalid_limit_rejected(self):
         with self.assertRaises(ValueError):
             validate_sql(SQL, top_n=201)
